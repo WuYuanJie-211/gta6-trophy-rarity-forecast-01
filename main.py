@@ -209,7 +209,12 @@ def forecast_case(case):
         g0 = 0.0
     g0 = clamp(g0, -0.05, 0.20)
     n_target = n_last * math.exp(g0 * h_eff)
-    n_target = max(n_target, n_last)  # tracked players only grow
+    if n_target < n_last:
+        # Shrinkage (Superbot final review item #2): if Exophase cleans up
+        # inactive tracked players between the deadline and the target, N
+        # drops and rates rise. Let the damped decline fall below N_last
+        # at half weight instead of clamping to it.
+        n_target = n_last + 0.5 * (n_target - n_last)
 
     # Largest single log-N step in history (dilution scale).
     max_step = 0.0
@@ -266,7 +271,17 @@ def forecast_case(case):
         logit_ar = logit(last_rate) + slope * h_eff
 
         # --- blend (decomposition primary, AR fallback) ----------------------
-        w_ar = 0.3 if len(xs12) >= 3 else 0.0
+        # Sparse history (Superbot final review item #1): if the trophy's
+        # earner count has taken fewer than ~3 distinct values, the
+        # cumulative slope is mostly noise — raise the AR fallback weight
+        # from 30% to 50%. Trophies with >=3 distinct E values keep 70/30.
+        n_distinct_e = len({round(e_series[i][j], 3)
+                            for i in range(len(history))
+                            if e_series[i][j] is not None})
+        if len(xs12) >= 3:
+            w_ar = 0.5 if n_distinct_e < 3 else 0.3
+        else:
+            w_ar = 0.0
         logit_center = (1.0 - w_ar) * logit(rate_decomp) + w_ar * logit_ar
         center = inv_logit(logit_center)
         # Ceiling solve: history may override the prior, but a forecast
